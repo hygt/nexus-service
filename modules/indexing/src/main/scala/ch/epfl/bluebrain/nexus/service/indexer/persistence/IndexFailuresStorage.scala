@@ -1,6 +1,6 @@
 package ch.epfl.bluebrain.nexus.service.indexer.persistence
 
-import akka.actor.{ExtendedActorSystem, Extension, ExtensionId, ExtensionIdProvider}
+import akka.actor.ActorSystem
 import akka.persistence.cassandra.session.scaladsl.CassandraSession
 import akka.persistence.query.{Offset, Sequence, TimeBasedUUID}
 import akka.stream.scaladsl.Source
@@ -34,10 +34,8 @@ trait IndexFailuresStorage {
 }
 
 final class CassandraIndexFailuresStorage(session: CassandraSession, keyspace: String, table: String)(
-    implicit
-    ec: ExecutionContext)
+    implicit ec: ExecutionContext)
     extends IndexFailuresStorage
-    with Extension
     with OffsetCodec {
 
   override def storeEvent[T](identifier: String, persistenceId: String, offset: Offset, event: T)(
@@ -63,20 +61,17 @@ final class CassandraIndexFailuresStorage(session: CassandraSession, keyspace: S
   }
 }
 
-object IndexFailuresStorage
-    extends ExtensionId[CassandraIndexFailuresStorage]
-    with ExtensionIdProvider
-    with CassandraStorage {
+object CassandraIndexFailuresStorage {
 
-  override def lookup(): ExtensionId[_ <: Extension] = IndexFailuresStorage
-
-  override def createExtension(system: ExtendedActorSystem): CassandraIndexFailuresStorage = {
+  def apply()(implicit as: ActorSystem): CassandraIndexFailuresStorage = {
     val (session, keyspace, table) =
-      createSession(
+      CassandraStorage.createSession(
         "index-failures",
         "identifier varchar, persistenceId text, offset bigint, event text, PRIMARY KEY (identifier, persistenceId, offset)",
-        system)
-    new CassandraIndexFailuresStorage(session, keyspace, table)(system.dispatcher)
+        "index_failures",
+        as
+      )
+    new CassandraIndexFailuresStorage(session, keyspace, table)(as.dispatcher)
   }
 
 }

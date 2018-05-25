@@ -26,10 +26,10 @@ import scala.concurrent.duration.Duration
   */
 object SequentialTagIndexer {
 
-  private[persistence] def initialize(underlying: () => Future[Unit], id: String)(
+  private[persistence] def initialize(underlying: () => Future[Unit], id: String, keyspace: String)(
       implicit as: ActorSystem): () => Future[Offset] = {
     import as.dispatcher
-    val projection = ResumableProjection(id)
+    val projection = ResumableProjection(id, keyspace)
     () =>
       underlying().flatMap(_ => projection.fetchLatestOffset)
   }
@@ -40,20 +40,21 @@ object SequentialTagIndexer {
     () =>
       underlying().map(_ => NoOffset)
   }
-  private[persistence] def source[T](index: T => Future[Unit], id: String, pluginId: String, tag: String)(
+  private[persistence] def source[T](index: T => Future[Unit], id: String, keyspace: String, pluginId: String, tag: String)(
       implicit as: ActorSystem,
       T: Typeable[T],
       E: Encoder[T]): Offset => Source[Unit, NotUsed] = {
-    source(toFlow(index, id), id, pluginId, tag)
+    source(toFlow(index, id), id, keyspace, pluginId, tag)
   }
 
   private[persistence] def source[T](
       index: Flow[(Offset, String, T), Offset, _],
       id: String,
+      keyspace: String,
       pluginId: String,
       tag: String)(implicit as: ActorSystem, T: Typeable[T]): Offset => Source[Unit, NotUsed] = {
     val log        = Logging(as, SequentialTagIndexer.getClass)
-    val projection = ResumableProjection(id)
+    val projection = ResumableProjection(id, keyspace)
     (offset: Offset) =>
       source(index, pluginId, tag)
         .apply(offset)
@@ -141,10 +142,11 @@ object SequentialTagIndexer {
   final def start[T](init: () => Future[Unit],
                      index: T => Future[Unit],
                      id: String,
+                     keyspace: String,
                      pluginId: String,
                      tag: String,
                      name: String)(implicit as: ActorSystem, T: Typeable[T], E: Encoder[T]): ActorRef = {
-    SingletonStreamCoordinator.start(initialize(init, id), source(toFlow(index, id), id, pluginId, tag), name)
+    SingletonStreamCoordinator.start(initialize(init, id, keyspace), source(toFlow(index, id), id, keyspace, pluginId, tag), name)
   }
 
   /**
@@ -164,10 +166,11 @@ object SequentialTagIndexer {
     */
   final def start[T](flow: Flow[(Offset, String, T), Offset, NotUsed],
                      id: String,
+                     keyspace: String,
                      pluginId: String,
                      tag: String,
                      name: String)(implicit as: ActorSystem, T: Typeable[T]): ActorRef = {
-    SingletonStreamCoordinator.start(initialize(() => Future.successful(()), id), source(flow, id, pluginId, tag), name)
+    SingletonStreamCoordinator.start(initialize(() => Future.successful(()), id, keyspace), source(flow, id, keyspace, pluginId, tag), name)
   }
 
   /**
@@ -186,11 +189,11 @@ object SequentialTagIndexer {
     * @param E        an implicitly available [[Encoder]] for T
     * @tparam T the event type
     */
-  final def start[T](index: T => Future[Unit], id: String, pluginId: String, tag: String, name: String)(
+  final def start[T](index: T => Future[Unit], id: String, keyspace: String, pluginId: String, tag: String, name: String)(
       implicit as: ActorSystem,
       T: Typeable[T],
       E: Encoder[T]): ActorRef =
-    start(() => Future.successful(()), index, id, pluginId, tag, name)
+    start(() => Future.successful(()), index, id, keyspace, pluginId, tag, name)
 
   /**
     * Generic tag indexer that iterates over the collection of events selected

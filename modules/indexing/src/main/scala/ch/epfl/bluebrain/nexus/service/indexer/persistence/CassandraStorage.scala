@@ -1,16 +1,16 @@
 package ch.epfl.bluebrain.nexus.service.indexer.persistence
 
 import akka.Done
-import akka.actor.ExtendedActorSystem
+import akka.actor.ActorSystem
 import akka.event.Logging
 import akka.persistence.cassandra.CassandraPluginConfig
 import akka.persistence.cassandra.session.scaladsl.CassandraSession
 import com.datastax.driver.core.Session
-import com.typesafe.config.Config
+import com.typesafe.config.{Config, ConfigValueFactory}
 
 import scala.concurrent.{ExecutionContext, Future}
 
-trait CassandraStorage {
+object CassandraStorage {
 
   /**
     * Initialize Cassandra session and create keyspace and table if not exists.
@@ -22,9 +22,10 @@ trait CassandraStorage {
     */
   def createSession(name: String,
                     tableSchema: String,
-                    system: ExtendedActorSystem): (CassandraSession, String, String) = {
+                    keyspace: String,
+                    system: ActorSystem): (CassandraSession, String, String) = {
     implicit val ec   = system.dispatcher
-    val journalConfig = lookupConfig(system)
+    val journalConfig = lookupConfig(system, keyspace)
     val table         = journalConfig.getString(s"$name-table")
     val config        = new CassandraPluginConfig(system, journalConfig)
     val log           = Logging(system, s"${name.capitalize}Storage")
@@ -38,6 +39,7 @@ trait CassandraStorage {
       metricsCategory = s"$name-storage",
       init = session => executeCreateKeyspaceAndTable(session, config, table, tableSchema)
     )
+    log.warning(s"Session created - ks: ${config.keyspace} table: $table")
     (session, config.keyspace, table)
   }
 
@@ -68,6 +70,8 @@ trait CassandraStorage {
     } else keyspace
   }
 
-  private def lookupConfig(system: ExtendedActorSystem): Config =
-    system.settings.config.getConfig("cassandra-journal")
+  private def lookupConfig(system: ActorSystem, keyspace: String): Config = {
+    val config = system.settings.config.getConfig("cassandra-journal")
+    config.withValue("keyspace", ConfigValueFactory.fromAnyRef(s""""$keyspace""""))
+  }
 }

@@ -1,8 +1,9 @@
 package ch.epfl.bluebrain.nexus.service.indexer.persistence
 
-import akka.actor.{ExtendedActorSystem, Extension, ExtensionId, ExtensionIdProvider}
+import akka.actor.ActorSystem
 import akka.persistence.cassandra.session.scaladsl.CassandraSession
 import akka.persistence.query.{NoOffset, Offset}
+import io.circe.parser._
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -43,9 +44,7 @@ trait ProjectionStorage {
 final class CassandraProjectionStorage(session: CassandraSession, keyspace: String, table: String)(
     implicit ec: ExecutionContext)
     extends ProjectionStorage
-    with Extension
     with OffsetCodec {
-  import io.circe.parser._
 
   override def storeOffset(identifier: String, offset: Offset): Future[Unit] = {
     val stmt = s"update $keyspace.$table set offset = ? where identifier = ?"
@@ -61,16 +60,12 @@ final class CassandraProjectionStorage(session: CassandraSession, keyspace: Stri
   }
 }
 
-object ProjectionStorage
-    extends ExtensionId[CassandraProjectionStorage]
-    with ExtensionIdProvider
-    with CassandraStorage {
-  override def lookup(): ExtensionId[_ <: Extension] = ProjectionStorage
+object CassandraProjectionStorage {
 
-  override def createExtension(system: ExtendedActorSystem): CassandraProjectionStorage = {
-    val (session, keyspace, table) =
-      createSession("projection", "identifier varchar primary key, offset text", system)
+  def apply(keyspace: String)(implicit as: ActorSystem): CassandraProjectionStorage = {
+    val (session, ks, table) =
+      CassandraStorage.createSession("projection", "identifier varchar primary key, offset text", keyspace, as)
 
-    new CassandraProjectionStorage(session, keyspace, table)(system.dispatcher)
+    new CassandraProjectionStorage(session, ks, table)(as.dispatcher)
   }
 }

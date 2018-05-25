@@ -27,17 +27,18 @@ class ResumableProjectionSpec
 
   "A ResumableProjection" should {
     val id = UUID.randomUUID().toString
+    val keyspace = "keyspace"
 
     "store an offset" in {
-      ResumableProjection(id).storeLatestOffset(Offset.sequence(42)).futureValue
+      ResumableProjection(id, keyspace).storeLatestOffset(Offset.sequence(42)).futureValue
     }
 
     "retrieve stored offset" in {
-      ResumableProjection(id).fetchLatestOffset.futureValue shouldEqual Offset.sequence(42)
+      ResumableProjection(id, keyspace).fetchLatestOffset.futureValue shouldEqual Offset.sequence(42)
     }
 
     "retrieve NoOffset for unknown projections" in {
-      ResumableProjection(UUID.randomUUID().toString).fetchLatestOffset.futureValue shouldEqual NoOffset
+      ResumableProjection(UUID.randomUUID().toString, keyspace).fetchLatestOffset.futureValue shouldEqual NoOffset
     }
   }
 

@@ -7,12 +7,12 @@ import io.circe.{Decoder, Encoder}
 
 import scala.concurrent.Future
 
-trait IndexFailuresLog {
-
-  /**
-    * @return an unique identifier for this failures log
-    */
-  def identifier: String
+/**
+  *
+  * @param identifier a unique identifier for this projection
+  * @param storage the underlying storage
+  */
+final class IndexFailuresLog(val identifier: String, storage: IndexFailuresStorage) {
 
   /**
     * Records the failed event against this failures log.
@@ -23,27 +23,18 @@ trait IndexFailuresLog {
     * @tparam T the generic type of the ''event''
     * @return a future of [[Unit]] upon success or a failure otherwise
     */
-  def storeEvent[T](persistenceId: String, offset: Offset, event: T)(implicit E: Encoder[T]): Future[Unit]
+  def storeEvent[T](persistenceId: String, offset: Offset, event: T)(implicit E: Encoder[T]): Future[Unit] =
+    storage.storeEvent(identifier, persistenceId, offset, event)
 
   /**
     * Retrieve the events for this failures log.
     *
     * @tparam T the generic type of the returned ''event''s
     */
-  def fetchEvents[T](implicit D: Decoder[T]): Source[T, _]
+  def fetchEvents[T](implicit D: Decoder[T]): Source[T, _] = storage.fetchEvents(identifier)
 }
 
 object IndexFailuresLog {
-  private[persistence] def apply(id: String, storage: IndexFailuresStorage): IndexFailuresLog = new IndexFailuresLog {
-
-    override val identifier: String = id
-
-    override def storeEvent[T](persistenceId: String, offset: Offset, event: T)(implicit E: Encoder[T]): Future[Unit] =
-      storage.storeEvent(identifier, persistenceId, offset, event)
-
-    override def fetchEvents[T](implicit D: Decoder[T]): Source[T, _] = storage.fetchEvents(identifier)
-
-  }
 
   /**
     * Constructs a new `IndexFailuresLog` instance with the specified identifier.
@@ -54,5 +45,5 @@ object IndexFailuresLog {
     * @param as an implicitly available actor system
     */
   final def apply(id: String)(implicit as: ActorSystem): IndexFailuresLog =
-    apply(id, IndexFailuresStorage(as))
+    new IndexFailuresLog(id, CassandraIndexFailuresStorage())
 }
