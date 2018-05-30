@@ -7,16 +7,15 @@ import akka.Done
 import akka.cluster.Cluster
 import akka.stream.ActorMaterializer
 import akka.testkit.{TestActorRef, TestKit, TestKitBase}
+import ch.epfl.bluebrain.nexus.commons.types.{Err, RetriableErr}
 import ch.epfl.bluebrain.nexus.service.indexer.persistence.Fixture.{RetryExecuted, _}
 import ch.epfl.bluebrain.nexus.service.indexer.persistence.SequentialTagIndexerSpec._
 import ch.epfl.bluebrain.nexus.service.indexer.stream.StreamCoordinator
 import ch.epfl.bluebrain.nexus.service.indexer.stream.StreamCoordinator.Stop
-import ch.epfl.bluebrain.nexus.commons.types.{Err, RetriableErr}
-import ch.epfl.bluebrain.nexus.sourcing.PersistentId
-import ch.epfl.bluebrain.nexus.sourcing.akka.{ShardingAggregate, SourcingAkkaSettings}
+import ch.epfl.bluebrain.nexus.sourcing.akka._
+import io.circe.generic.auto._
 import org.scalatest.concurrent.{Eventually, ScalaFutures}
 import org.scalatest.{BeforeAndAfterAll, DoNotDiscover, Matchers, WordSpecLike}
-import io.circe.generic.auto._
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -62,7 +61,7 @@ class SequentialTagIndexerSpec
 
     "index existing events" in {
       val agg = ShardingAggregate("agg", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
-      agg.append(PersistentId("first"), Fixture.Executed).futureValue
+      agg.append(PersistenceId("first"), Fixture.Executed).futureValue
 
       val count = new AtomicLong(0L)
       val init  = new AtomicLong(10L)
@@ -70,7 +69,7 @@ class SequentialTagIndexerSpec
         Future.successful[Unit] {
           val _ = count.incrementAndGet()
       }
-      val projId = UUID.randomUUID().toString
+      val projId   = UUID.randomUUID().toString
       val keyspace = "keyspace"
 
       val initialize = SequentialTagIndexer.initialize(initFunction(init), projId, keyspace)
@@ -89,11 +88,11 @@ class SequentialTagIndexerSpec
 
     "select only the configured event types" in {
       val agg = ShardingAggregate("selected", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
-      agg.append(PersistentId("first"), Fixture.Executed).futureValue
-      agg.append(PersistentId("second"), Fixture.Executed).futureValue
-      agg.append(PersistentId("third"), Fixture.Executed).futureValue
-      agg.append(PersistentId("selected"), Fixture.OtherExecuted).futureValue
-      agg.append(PersistentId("selected"), Fixture.OtherExecuted).futureValue
+      agg.append(PersistenceId("first"), Fixture.Executed).futureValue
+      agg.append(PersistenceId("second"), Fixture.Executed).futureValue
+      agg.append(PersistenceId("third"), Fixture.Executed).futureValue
+      agg.append(PersistenceId("selected"), Fixture.OtherExecuted).futureValue
+      agg.append(PersistenceId("selected"), Fixture.OtherExecuted).futureValue
 
       val count = new AtomicLong(0L)
       val init  = new AtomicLong(10L)
@@ -119,31 +118,32 @@ class SequentialTagIndexerSpec
       expectTerminated(indexer)
     }
 
-    "select event types for all keyspaces" in {
-      val agg = ShardingAggregate("agg", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
-      agg.append(PersistentId("first", "ks1"), Fixture.Executed).futureValue
-      agg.append(PersistentId("second", "ks1"), Fixture.Executed).futureValue
-      agg.append(PersistentId("third", "ks1"), Fixture.Executed).futureValue
-      agg.append(PersistentId("first", "ks2"), Fixture.Executed).futureValue
-      agg.append(PersistentId("second", "ks2"), Fixture.Executed).futureValue
-      agg.append(PersistentId("third", "ks2"), Fixture.Executed).futureValue
+    "select event types for a given keyspace" in {
+      val agg = ShardingAggregate("keyspaces", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
+      val keyspace = "ks1"
+      val other = "ks2"
+      agg.append(PersistenceId("first", keyspace), Fixture.Executed).futureValue
+      agg.append(PersistenceId("second", keyspace), Fixture.Executed).futureValue
+      agg.append(PersistenceId("third", keyspace), Fixture.Executed).futureValue
+      agg.append(PersistenceId("first", other), Fixture.Executed).futureValue
+      agg.append(PersistenceId("second", other), Fixture.Executed).futureValue
+      agg.append(PersistenceId("third", other), Fixture.Executed).futureValue
 
       val count = new AtomicLong(0L)
       val init  = new AtomicLong(10L)
 
-      val index = (_: Event) =>
+      val index = (e: Event) =>
         Future.successful[Unit] {
           val _ = count.incrementAndGet()
-        }
-      val projId = UUID.randomUUID().toString
-      val keyspace = "keyspace"
+      }
+      val projId   = UUID.randomUUID().toString
 
       val initialize = SequentialTagIndexer.initialize(initFunction(init), projId, keyspace)
-      val source     = SequentialTagIndexer.source(index, projId, keyspace, pluginId, "other")
+      val source     = SequentialTagIndexer.source(index, projId, keyspace, pluginId, "keyspaces")
       val indexer    = TestActorRef(new StreamCoordinator(initialize, source))
 
       eventually {
-        count.get shouldEqual 6L
+        count.get shouldEqual 3L
         init.get shouldEqual 11L
       }
 
@@ -154,7 +154,7 @@ class SequentialTagIndexerSpec
 
     "restart the indexing if the Done is emitted" in {
       val agg = ShardingAggregate("agg", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
-      agg.append(PersistentId("first"), Fixture.AnotherExecuted).futureValue
+      agg.append(PersistenceId("first"), Fixture.AnotherExecuted).futureValue
 
       val count = new AtomicLong(0L)
       val init  = new AtomicLong(10L)
@@ -162,7 +162,7 @@ class SequentialTagIndexerSpec
         Future.successful[Unit] {
           val _ = count.incrementAndGet()
       }
-      val projId = UUID.randomUUID().toString
+      val projId   = UUID.randomUUID().toString
       val keyspace = "keyspace"
 
       val initialize = SequentialTagIndexer.initialize(initFunction(init), projId, keyspace)
@@ -175,7 +175,7 @@ class SequentialTagIndexerSpec
       }
       indexer ! Done
 
-      agg.append(PersistentId("second"), Fixture.AnotherExecuted).futureValue
+      agg.append(PersistenceId("second"), Fixture.AnotherExecuted).futureValue
 
       eventually {
         count.get() shouldEqual 2L
@@ -189,13 +189,13 @@ class SequentialTagIndexerSpec
 
     "retry when index function fails" in {
       val agg = ShardingAggregate("retry", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
-      agg.append(PersistentId("retry"), Fixture.RetryExecuted).futureValue
+      agg.append(PersistenceId("retry"), Fixture.RetryExecuted).futureValue
 
       val count = new AtomicLong(0L)
       val init  = new AtomicLong(10L)
 
-      val index  = (_: RetryExecuted.type) => Future.failed[Unit](SomeError(count.incrementAndGet()))
-      val projId = UUID.randomUUID().toString
+      val index    = (_: RetryExecuted.type) => Future.failed[Unit](SomeError(count.incrementAndGet()))
+      val projId   = UUID.randomUUID().toString
       val keyspace = "keyspace"
 
       val initialize = SequentialTagIndexer.initialize(initFunction(init), projId, keyspace)
@@ -220,14 +220,14 @@ class SequentialTagIndexerSpec
 
     "not retry when index function fails with a non RetriableErr" in {
       val agg = ShardingAggregate("ignore", sourcingSettings)(Fixture.initial, Fixture.next, Fixture.eval)
-      agg.append(PersistentId("ignore"), Fixture.IgnoreExecuted).futureValue
+      agg.append(PersistenceId("ignore"), Fixture.IgnoreExecuted).futureValue
 
       val count = new AtomicLong(0L)
       val init  = new AtomicLong(10L)
 
       val index =
         (_: IgnoreExecuted.type) => Future.failed[Unit](SomeOtherError(count.incrementAndGet()))
-      val projId = UUID.randomUUID().toString
+      val projId   = UUID.randomUUID().toString
       val keyspace = "keyspace"
 
       val initialize = SequentialTagIndexer.initialize(initFunction(init), projId, keyspace)

@@ -36,7 +36,7 @@ val journalVersion                  = "3.0.19"
 val monixVersion                    = "2.3.3"
 val scalaTestVersion                = "3.0.5"
 val shapelessVersion                = "2.3.3"
-val sourcingVersion                 = "0.10.1+5-a915f634+20180524-1146"
+val sourcingVersion                 = "0.10.5+1-f56f865f+20180528-1654"
 
 lazy val akkaActor           = "com.typesafe.akka" %% "akka-actor"            % akkaVersion
 lazy val akkaClusterSharding = "com.typesafe.akka" %% "akka-cluster-sharding" % akkaVersion

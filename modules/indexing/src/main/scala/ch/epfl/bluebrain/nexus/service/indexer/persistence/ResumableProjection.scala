@@ -46,6 +46,7 @@ object ResumableProjection {
     * [[ch.epfl.bluebrain.nexus.service.indexer.persistence.ProjectionStorage]] extension.
     *
     * @param id an identifier for the projection
+    * @param keyspace the datastore keyspace
     * @param as an implicitly available actor system
     * @return a new `ResumableProjection` instance with the specified identifier
     */

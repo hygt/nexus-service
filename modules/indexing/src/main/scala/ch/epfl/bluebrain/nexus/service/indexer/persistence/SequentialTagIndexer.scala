@@ -12,6 +12,7 @@ import ch.epfl.bluebrain.nexus.service.indexer.retryer.RetryOps._
 import ch.epfl.bluebrain.nexus.service.indexer.retryer.RetryStrategy
 import ch.epfl.bluebrain.nexus.service.indexer.retryer.RetryStrategy.Backoff
 import ch.epfl.bluebrain.nexus.service.indexer.stream.{SingletonStreamCoordinator, StreamCoordinator}
+import com.typesafe.config.ConfigFactory
 import io.circe.Encoder
 import shapeless.Typeable
 
@@ -40,10 +41,12 @@ object SequentialTagIndexer {
     () =>
       underlying().map(_ => NoOffset)
   }
-  private[persistence] def source[T](index: T => Future[Unit], id: String, keyspace: String, pluginId: String, tag: String)(
-      implicit as: ActorSystem,
-      T: Typeable[T],
-      E: Encoder[T]): Offset => Source[Unit, NotUsed] = {
+  private[persistence] def source[T](
+      index: T => Future[Unit],
+      id: String,
+      keyspace: String,
+      pluginId: String,
+      tag: String)(implicit as: ActorSystem, T: Typeable[T], E: Encoder[T]): Offset => Source[Unit, NotUsed] = {
     source(toFlow(index, id), id, keyspace, pluginId, tag)
   }
 
@@ -56,7 +59,7 @@ object SequentialTagIndexer {
     val log        = Logging(as, SequentialTagIndexer.getClass)
     val projection = ResumableProjection(id, keyspace)
     (offset: Offset) =>
-      source(index, pluginId, tag)
+      source(index, pluginId, keyspace, tag)
         .apply(offset)
         .mapAsync(1) { offset =>
           log.debug("Storing latest offset '{}'", offset)
@@ -64,13 +67,13 @@ object SequentialTagIndexer {
         }
   }
 
-  private[persistence] def source[T](index: Flow[(Offset, String, T), Offset, _], pluginId: String, tag: String)(
+  private[persistence] def source[T](index: Flow[(Offset, String, T), Offset, _], pluginId: String, keyspace: String, tag: String)(
       implicit as: ActorSystem,
       T: Typeable[T]): Offset => Source[Offset, NotUsed] = {
     val log = Logging(as, SequentialTagIndexer.getClass)
     (offset: Offset) =>
       PersistenceQuery(as)
-        .readJournalFor[EventsByTagQuery](pluginId)
+        .readJournalFor[EventsByTagQuery](pluginId, ConfigFactory.parseString(s"keyspace=$keyspace"))
         .eventsByTag(tag, offset)
         .flatMapConcat {
           case EventEnvelope(off, persistenceId, sequenceNr, event) =>
@@ -146,7 +149,9 @@ object SequentialTagIndexer {
                      pluginId: String,
                      tag: String,
                      name: String)(implicit as: ActorSystem, T: Typeable[T], E: Encoder[T]): ActorRef = {
-    SingletonStreamCoordinator.start(initialize(init, id, keyspace), source(toFlow(index, id), id, keyspace, pluginId, tag), name)
+    SingletonStreamCoordinator.start(initialize(init, id, keyspace),
+                                     source(toFlow(index, id), id, keyspace, pluginId, tag),
+                                     name)
   }
 
   /**
@@ -170,7 +175,9 @@ object SequentialTagIndexer {
                      pluginId: String,
                      tag: String,
                      name: String)(implicit as: ActorSystem, T: Typeable[T]): ActorRef = {
-    SingletonStreamCoordinator.start(initialize(() => Future.successful(()), id, keyspace), source(flow, id, keyspace, pluginId, tag), name)
+    SingletonStreamCoordinator.start(initialize(() => Future.successful(()), id, keyspace),
+                                     source(flow, id, keyspace, pluginId, tag),
+                                     name)
   }
 
   /**
@@ -189,10 +196,12 @@ object SequentialTagIndexer {
     * @param E        an implicitly available [[Encoder]] for T
     * @tparam T the event type
     */
-  final def start[T](index: T => Future[Unit], id: String, keyspace: String, pluginId: String, tag: String, name: String)(
-      implicit as: ActorSystem,
-      T: Typeable[T],
-      E: Encoder[T]): ActorRef =
+  final def start[T](index: T => Future[Unit],
+                     id: String,
+                     keyspace: String,
+                     pluginId: String,
+                     tag: String,
+                     name: String)(implicit as: ActorSystem, T: Typeable[T], E: Encoder[T]): ActorRef =
     start(() => Future.successful(()), index, id, keyspace, pluginId, tag, name)
 
   /**
@@ -211,10 +220,11 @@ object SequentialTagIndexer {
     */
   final def startLocal[T](init: () => Future[Unit],
                           index: T => Future[Unit],
+                          keyspace: String,
                           pluginId: String,
                           tag: String,
                           name: String)(implicit as: ActorSystem, T: Typeable[T]): ActorRef = {
-    StreamCoordinator.start(initialize(init), source(toFlow(index), pluginId, tag), name)
+    StreamCoordinator.start(initialize(init), source(toFlow(index), pluginId, keyspace, tag), name)
   }
 
   /**
@@ -231,10 +241,11 @@ object SequentialTagIndexer {
     * @tparam T the event type
     */
   final def startLocal[T](flow: Flow[(Offset, String, T), Offset, NotUsed],
+                          keyspace: String,
                           pluginId: String,
                           tag: String,
                           name: String)(implicit as: ActorSystem, T: Typeable[T]): ActorRef = {
-    StreamCoordinator.start(initialize(() => Future.successful(())), source(flow, pluginId, tag), name)
+    StreamCoordinator.start(initialize(() => Future.successful(())), source(flow, pluginId, keyspace, tag), name)
   }
 
   /**
@@ -249,9 +260,9 @@ object SequentialTagIndexer {
     * @param as       an implicitly available actor system
     * @param T        a Typeable instance for the event type T
     */
-  final def startLocal[T](index: T => Future[Unit], pluginId: String, tag: String, name: String)(
+  final def startLocal[T](index: T => Future[Unit], keyspace: String, pluginId: String, tag: String, name: String)(
       implicit as: ActorSystem,
       T: Typeable[T]): ActorRef =
-    startLocal(() => Future.successful(()), index, pluginId, tag, name)
+    startLocal(() => Future.successful(()), index, keyspace, pluginId, tag, name)
   // $COVERAGE-ON$
 }
