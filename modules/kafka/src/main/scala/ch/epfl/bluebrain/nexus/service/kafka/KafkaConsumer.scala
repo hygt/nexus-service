@@ -1,10 +1,11 @@
-package ch.epfl.bluebrain.nexus.service.queue
+package ch.epfl.bluebrain.nexus.service.kafka
 
 import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.kafka.ConsumerSettings
 import akka.pattern.BackoffSupervisor.{CurrentChild, GetCurrentChild}
 import akka.pattern.{Backoff, BackoffSupervisor, ask}
 import akka.util.Timeout
+import ch.epfl.bluebrain.nexus.service.indexer.persistence.IndexFailuresLog
 import io.circe.Decoder
 
 import scala.concurrent.duration._
@@ -20,28 +21,31 @@ object KafkaConsumer {
     * @param settings an instance of [[akka.kafka.ConsumerSettings]]
     * @param index    the indexing function that is applied to received events
     * @param topic    the Kafka topic to read messages from
+    * @param name     a valid and __unique__ prefix for the supervisor and child actor names
     * @param decoder  a Circe decoder to deserialize received messages
     * @param as       an implicitly available actor system
     * @tparam Event   the event generic type
     * @return the supervisor actor handle
-    * @note  Calling this method multiple times within the same actor system context will result in
-    *        an [[akka.actor.InvalidActorNameException]] being thrown. You must stop any previously existing
-    *        supervisor first.
     */
-  def start[Event](settings: ConsumerSettings[String, String], index: Event => Future[Unit], topic: String)(
-      implicit as: ActorSystem,
-      decoder: Decoder[Event]): ActorRef = {
-    val childProps = Props(classOf[KafkaSupervisedConsumer[Event]], settings, index, topic, decoder)
+  def start[Event](
+      settings: ConsumerSettings[String, String],
+      index: Event => Future[Unit],
+      topic: String,
+      name: String,
+      committable: Boolean = true,
+      failuresLog: Option[IndexFailuresLog] = None)(implicit as: ActorSystem, decoder: Decoder[Event]): ActorRef = {
+    val childProps =
+      Props(classOf[KafkaSupervisedConsumer[Event]], settings, index, topic, decoder, committable, failuresLog)
     val supervisor = as.actorOf(
       BackoffSupervisor.props(
         Backoff.onStop(
           childProps,
-          childName = "kafka-stream-supervised-actor",
+          childName = s"$name-child",
           minBackoff = 3.seconds,
           maxBackoff = 30.seconds,
           randomFactor = 0.2
         )),
-      name = "kafka-stream-supervisor"
+      name = s"$name-supervisor"
     )
 
     supervisor
@@ -52,7 +56,7 @@ object KafkaConsumer {
     *
     * @param supervisor the supervisor actor handle
     */
-  private[queue] def stop(supervisor: ActorRef)(implicit as: ActorSystem): Unit = {
+  private[kafka] def stop(supervisor: ActorRef)(implicit as: ActorSystem): Unit = {
     implicit val ec: ExecutionContext = as.dispatcher
     implicit val to: Timeout          = 30.seconds
     (supervisor ? GetCurrentChild).mapTo[CurrentChild].foreach(_.ref.foreach(as.stop))

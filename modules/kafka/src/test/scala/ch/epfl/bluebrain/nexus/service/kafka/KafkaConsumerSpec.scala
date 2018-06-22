@@ -1,4 +1,4 @@
-package ch.epfl.bluebrain.nexus.service.queue
+package ch.epfl.bluebrain.nexus.service.kafka
 
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -59,7 +59,7 @@ class KafkaConsumerSpec
         for (_ <- 1 to 100) {
           kafkaPublisher.send(message)
         }
-        val supervisor = KafkaConsumer.start[KafkaEvent](consumerSettings, index, "test-topic-1")
+        val supervisor = KafkaConsumer.start[KafkaEvent](consumerSettings, index, "test-topic-1", "one")
         eventually {
           counter.get shouldEqual 100
         }
@@ -90,7 +90,7 @@ class KafkaConsumerSpec
         for (_ <- 1 to 100) {
           publishStringMessageToKafka("test-topic-2", """{"msg":"foo"}""")
         }
-        val supervisor = KafkaConsumer.start[Message](consumerSettings, index, "test-topic-2")
+        val supervisor = KafkaConsumer.start[Message](consumerSettings, index, "test-topic-2", "two")
         eventually {
           counter.get shouldEqual 100
         }
@@ -121,8 +121,6 @@ class KafkaConsumerSpec
           Future.failed(new Exception)
       }
 
-      val as1   = ActorSystem("embedded-kafka-1")
-      val as2   = ActorSystem("embedded-kafka-2")
       val topic = "test-topic-3"
 
       val consumerSettings =
@@ -134,8 +132,8 @@ class KafkaConsumerSpec
           publishToKafka(topic, "partition-2", """{"msg":"bar"}""")
         }
 
-        val supervisor1 = KafkaConsumer.start[Message](consumerSettings, index, topic)(as1, msgDecoder)
-        val supervisor2 = KafkaConsumer.start[Message](consumerSettings, index, topic)(as2, msgDecoder)
+        val supervisor1 = KafkaConsumer.start[Message](consumerSettings, index, topic, "three-1")(system, msgDecoder)
+        val supervisor2 = KafkaConsumer.start[Message](consumerSettings, index, topic, "three-2")(system, msgDecoder)
 
         eventually {
           counter1.get shouldEqual 100
@@ -144,8 +142,6 @@ class KafkaConsumerSpec
         blockingStop(supervisor1)
         blockingStop(supervisor2)
       }
-      TestKit.shutdownActorSystem(as1)
-      TestKit.shutdownActorSystem(as2)
     }
 
     "handle exceptions while processing messages" in {
@@ -164,7 +160,7 @@ class KafkaConsumerSpec
         for (i <- 1 to 3) {
           publishStringMessageToKafka("test-topic-4", s"""{"msg":"foo-$i"}""")
         }
-        val supervisor = KafkaConsumer.start[Message](consumerSettings, isEven, "test-topic-4")
+        val supervisor = KafkaConsumer.start[Message](consumerSettings, isEven, "test-topic-4", "four")
         eventually {
           counter.get shouldEqual 6
         }
