@@ -4,13 +4,16 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import akka.actor.{ActorRef, ActorSystem}
 import akka.kafka.{ConsumerSettings, ProducerSettings}
+import akka.persistence.query.Offset
+import akka.stream.scaladsl.Source
 import akka.testkit.TestKit
 import ch.epfl.bluebrain.nexus.commons.types.RetriableErr
-import io.circe.Decoder
+import ch.epfl.bluebrain.nexus.service.indexer.persistence.IndexFailuresLog
+import io.circe.{Decoder, Encoder}
 import journal.Logger
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
-import org.scalatest.concurrent.Eventually
+import org.scalatest.concurrent.{Eventually, ScalaFutures}
 import org.scalatest.{BeforeAndAfterAll, Matchers, WordSpecLike}
 
 import scala.concurrent.Future
@@ -22,6 +25,7 @@ class KafkaConsumerSpec
     with Eventually
     with Matchers
     with BeforeAndAfterAll
+    with ScalaFutures
     with EmbeddedKafka {
 
   override implicit val patienceConfig: PatienceConfig  = PatienceConfig(30.seconds, 3.seconds)
@@ -47,13 +51,13 @@ class KafkaConsumerSpec
         Future.successful(())
       }
 
-      val message  = KafkaEvent("http://localhost/context", "some-id", 42L)
+      val message = KafkaEvent("http://localhost/context", "some-id", 42L)
       val consumerSettings = ConsumerSettings(system, new StringDeserializer, new StringDeserializer)
-          .withGroupId("group-id-1")
+        .withGroupId("group-id-1")
       val producerSettings = ProducerSettings(system, new StringSerializer, new StringSerializer)
 
       withRunningKafka {
-        val kafkaProducer = producerSettings.createKafkaProducer()
+        val kafkaProducer  = producerSettings.createKafkaProducer()
         val kafkaPublisher = new KafkaPublisher[KafkaEvent](kafkaProducer, "test-topic-1")
 
         for (_ <- 1 to 100) {
@@ -132,8 +136,12 @@ class KafkaConsumerSpec
           publishToKafka(topic, "partition-2", """{"msg":"bar"}""")
         }
 
-        val supervisor1 = KafkaConsumer.start[Message](consumerSettings, index, topic, "three-1")(system, msgDecoder)
-        val supervisor2 = KafkaConsumer.start[Message](consumerSettings, index, topic, "three-2")(system, msgDecoder)
+        val supervisor1 =
+          KafkaConsumer.start[Message](consumerSettings, index, topic, "three-1", committable = true)(system,
+                                                                                                      msgDecoder)
+        val supervisor2 =
+          KafkaConsumer.start[Message](consumerSettings, index, topic, "three-2", committable = false)(system,
+                                                                                                       msgDecoder)
 
         eventually {
           counter1.get shouldEqual 100
@@ -145,24 +153,47 @@ class KafkaConsumerSpec
     }
 
     "handle exceptions while processing messages" in {
-      val counter = new AtomicInteger
+      val counter  = new AtomicInteger
+      val failures = new AtomicInteger
 
-      def isEven(msg: Message): Future[Unit] = {
-        if (counter.incrementAndGet() % 2 == 0)
-          Future.successful(())
-        else
-          Future.failed(new RetriableErr(s"We need to use $msg somewhere!"))
+      def index(msg: Message): Future[Unit] = {
+        counter.incrementAndGet() match {
+          case 1 =>
+            Future.successful(())
+          case 2 =>
+            Future.failed(new RetriableErr(s"We need to use $msg somewhere!"))
+          case 3 =>
+            Future.successful(())
+          case 4 =>
+            Future.failed(new RuntimeException)
+          case _ =>
+            fail()
+        }
       }
 
       val consumerSettings =
         ConsumerSettings(system, new StringDeserializer, new StringDeserializer).withGroupId("group-id-4")
+      val failuresLog = new IndexFailuresLog {
+        override def identifier: String = "mocked-index-failures-log"
+
+        override def storeEvent[T](persistenceId: String,
+                                   offset: Offset,
+                                   event: T)(implicit E: Encoder[T]): Future[Unit] = {
+          failures.incrementAndGet()
+          Future.successful(())
+        }
+
+        override def fetchEvents[T](implicit D: Decoder[T]): Source[T, _] = ???
+      }
       withRunningKafka {
         for (i <- 1 to 3) {
           publishStringMessageToKafka("test-topic-4", s"""{"msg":"foo-$i"}""")
         }
-        val supervisor = KafkaConsumer.start[Message](consumerSettings, isEven, "test-topic-4", "four")
+        val supervisor =
+          KafkaConsumer.start[Message](consumerSettings, index, "test-topic-4", "four", true, Some(failuresLog))
         eventually {
-          counter.get shouldEqual 6
+          counter.get shouldEqual 4
+          failures.get shouldEqual 1
         }
         blockingStop(supervisor)
       }

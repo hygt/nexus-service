@@ -18,13 +18,15 @@ object KafkaConsumer {
     * events of type ''Event'' and indexes them using the provided function.  The consumer stream is
     * wrapped in its own actor whose life-cycle is managed by a [[akka.pattern.BackoffSupervisor]] instance.
     *
-    * @param settings an instance of [[akka.kafka.ConsumerSettings]]
-    * @param index    the indexing function that is applied to received events
-    * @param topic    the Kafka topic to read messages from
-    * @param name     a valid and __unique__ prefix for the supervisor and child actor names
-    * @param decoder  a Circe decoder to deserialize received messages
-    * @param as       an implicitly available actor system
-    * @tparam Event   the event generic type
+    * @param settings    an instance of [[akka.kafka.ConsumerSettings]]
+    * @param index       the indexing function that is applied to received events
+    * @param topic       the Kafka topic to read messages from
+    * @param name        a valid and __unique__ prefix for the supervisor and child actor names
+    * @param decoder     a Circe decoder to deserialize received messages
+    * @param committable indicates whether the consumer should use a committable source
+    * @param failuresLog an optional [[ch.epfl.bluebrain.nexus.service.indexer.persistence.IndexFailuresLog]]
+    * @param as          an implicitly available actor system
+    * @tparam Event      the event generic type
     * @return the supervisor actor handle
     */
   def start[Event](

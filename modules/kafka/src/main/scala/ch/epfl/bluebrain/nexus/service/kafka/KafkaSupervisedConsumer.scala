@@ -63,7 +63,10 @@ class KafkaSupervisedConsumer[Event](settings: ConsumerSettings[String, String],
     } else {
       Consumer
         .plainSource(settings, Subscriptions.topics(topic))
-        .mapAsync(1)(process)
+        .mapAsync(1) { record =>
+          process(record)
+            .recover { case e => log.error(s"Unexpected failure while processing record: $record", e) }
+        }
         .runWith(Sink.ignore)
     }
 
